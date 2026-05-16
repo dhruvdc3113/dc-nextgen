@@ -1,8 +1,9 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { CLASS_LIST, getSubjectsForClass } from "@/lib/data";
+import { CLASS_LIST } from "@/lib/data";
+import { fetchSubjects, type Subject } from "@/lib/api";
 
 function CircularRing({ percent, color, size = 110 }: { percent: number; color: string; size?: number }) {
   const r = (size - 14) / 2;
@@ -35,8 +36,17 @@ export default function ClassPage() {
   const classNum = parseInt(rawId?.replace("class-", "").replace(/\D/g, "") || "11");
   const [activeClassNum, setActiveClassNum] = useState(classNum || 11);
   const [activeTab, setActiveTab] = useState<"subjects" | "assessments">("subjects");
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [loadingSubjects, setLoadingSubjects] = useState(true);
 
-  const subjects = getSubjectsForClass(activeClassNum);
+  useEffect(() => {
+    setLoadingSubjects(true);
+    fetchSubjects(activeClassNum).then((data) => {
+      setSubjects(data);
+      setLoadingSubjects(false);
+    });
+  }, [activeClassNum]);
+
   const classLabel = activeClassNum <= 3 ? "Primary" : activeClassNum <= 8 ? "Middle School" : "Senior Secondary";
   const totalChapters = subjects.reduce((s, sub) => s + sub.totalChapters, 0);
   const totalTests = totalChapters * 4;
@@ -145,7 +155,12 @@ export default function ClassPage() {
         {/* ── SUBJECTS LIST ── */}
         {activeTab === "subjects" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            {subjects.map((subj) => (
+            {loadingSubjects && (
+              <div style={{ textAlign: "center", padding: "48px 0", color: "rgba(255,255,255,0.4)", fontSize: 15 }}>
+                Loading subjects...
+              </div>
+            )}
+            {!loadingSubjects && subjects.map((subj) => (
               <div key={subj.id}
                 style={{
                   background: "rgba(255,255,255,0.035)", border: `1px solid rgba(255,255,255,0.08)`,
@@ -254,24 +269,30 @@ export default function ClassPage() {
         {/* ── ASSESSMENTS TAB ── */}
         {activeTab === "assessments" && (
           <div>
-            {/* Summary stats */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginBottom: 28 }}>
-              {[
-                { label: "Total Tests Available", value: totalTests, icon: "📝", color: "#A78BFA" },
-                { label: "Tests Completed", value: Math.round(totalTests * 0.32), icon: "✅", color: "#10B981" },
-                { label: "Average Score", value: `${Math.round(subjects.reduce((s, sub) => s + sub.score, 0) / subjects.filter(s => s.score > 0).length || 0)}%`, icon: "🎯", color: "#F59E0B" },
-              ].map((stat) => (
-                <div key={stat.label} style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 18, padding: "22px 24px" }}>
-                  <div style={{ fontSize: 24, marginBottom: 10 }}>{stat.icon}</div>
-                  <div style={{ fontSize: 28, fontWeight: 900, color: stat.color, letterSpacing: "-0.5px" }}>{stat.value}</div>
-                  <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>{stat.label}</div>
-                </div>
-              ))}
-            </div>
+            {loadingSubjects && (
+              <div style={{ textAlign: "center", padding: "48px 0", color: "rgba(255,255,255,0.4)", fontSize: 15 }}>
+                Loading assessments...
+              </div>
+            )}
+            {/* Summary stats + cards */}
+            {!loadingSubjects && (<>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginBottom: 28 }}>
+                {[
+                  { label: "Total Tests Available", value: totalTests, icon: "📝", color: "#A78BFA" },
+                  { label: "Tests Completed", value: Math.round(totalTests * 0.32), icon: "✅", color: "#10B981" },
+                  { label: "Average Score", value: `${Math.round(subjects.reduce((s, sub) => s + sub.score, 0) / (subjects.filter(s => s.score > 0).length || 1))}%`, icon: "🎯", color: "#F59E0B" },
+                ].map((stat) => (
+                  <div key={stat.label} style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 18, padding: "22px 24px" }}>
+                    <div style={{ fontSize: 24, marginBottom: 10 }}>{stat.icon}</div>
+                    <div style={{ fontSize: 28, fontWeight: 900, color: stat.color, letterSpacing: "-0.5px" }}>{stat.value}</div>
+                    <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>{stat.label}</div>
+                  </div>
+                ))}
+              </div>
 
-            {/* Assessment cards per subject */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              {subjects.map((subj) => (
+              {/* Assessment cards per subject */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                {subjects.map((subj) => (
                 <div key={subj.id} style={{
                   background: "rgba(255,255,255,0.035)", border: `1px solid rgba(255,255,255,0.08)`,
                   borderRadius: 20, padding: "24px 28px",
@@ -314,8 +335,9 @@ export default function ClassPage() {
                     ))}
                   </div>
                 </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            </>)}
           </div>
         )}
 

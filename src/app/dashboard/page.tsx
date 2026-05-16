@@ -3,8 +3,9 @@ import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import Navbar from "@/components/Navbar";
 import {
-  ACHIEVEMENTS, LEADERBOARD_DATA, HEATMAP_DATA, MOTIVATIONAL_QUOTES, getSubjectsForClass,
+  ACHIEVEMENTS, HEATMAP_DATA, MOTIVATIONAL_QUOTES,
 } from "@/lib/data";
+import { fetchSubjects, fetchLeaderboard, fetchUserProfile, type Subject, type LeaderEntry, type UserProfile } from "@/lib/api";
 
 const STATS = [
   { label: "Chapters Mastered", value: 47, icon: "📚", color: "#A78BFA", bg: "rgba(124,58,237,0.14)", trend: "+3 this week", bar: 78 },
@@ -82,9 +83,16 @@ export default function DashboardPage() {
   const [aiMsgs, setAiMsgs] = useState([{ role: "ai", text: "Hello! I'm ARIA, your AI Tutor. Ask me anything — concepts, problems, study plans! 🎓" }]);
   const [isTyping, setIsTyping] = useState(false);
   const chatRef = useRef<HTMLDivElement>(null);
-  const subjects = getSubjectsForClass(11);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [leaderboardData, setLeaderboardData] = useState<LeaderEntry[]>([]);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
 
   useEffect(() => { document.body.className = lightMode ? "light-mode" : ""; }, [lightMode]);
+  useEffect(() => {
+    fetchSubjects(11).then(setSubjects);
+    fetchLeaderboard().then(setLeaderboardData);
+    fetchUserProfile().then(setProfile);
+  }, []);
   useEffect(() => {
     const iv = setInterval(() => setQuoteIdx(i => (i + 1) % MOTIVATIONAL_QUOTES.length), 6000);
     return () => clearInterval(iv);
@@ -402,7 +410,7 @@ export default function DashboardPage() {
                 <h2 style={{ fontSize: 16, fontWeight: 800 }}>Leaderboard</h2>
                 <Link href="/leaderboard" style={{ fontSize: 12, color: "#A78BFA", textDecoration: "none", fontWeight: 600 }}>Full Board →</Link>
               </div>
-              {LEADERBOARD_DATA.slice(0, 5).map((u, i) => (
+              {leaderboardData.slice(0, 5).map((u, i) => (
                 <div key={u.rank} style={{
                   display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 12, marginBottom: 6,
                   background: u.name === "You" ? "rgba(124,58,237,0.12)" : i < 3 ? "rgba(245,158,11,0.06)" : "rgba(255,255,255,0.02)",

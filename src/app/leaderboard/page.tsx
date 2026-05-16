@@ -2,15 +2,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import Navbar from "@/components/Navbar";
-import { LEADERBOARD_DATA } from "@/lib/data";
-
-const EXTENDED_LEADERBOARD = [
-  ...LEADERBOARD_DATA,
-  { rank: 9, name: "Neha Kapoor", class: "9", score: 11200, streak: 10, avatar: "NK", badge: "Scholar" },
-  { rank: 10, name: "Rahul Jain", class: "10", score: 10890, streak: 8, avatar: "RJ", badge: "Explorer" },
-  { rank: 11, name: "Pooja Sharma", class: "11", score: 10540, streak: 7, avatar: "PS", badge: "Explorer" },
-  { rank: 12, name: "Aditya Kumar", class: "12", score: 10120, streak: 6, avatar: "AK", badge: "Explorer" },
-];
+import { fetchLeaderboard, type LeaderEntry } from "@/lib/api";
 
 const BADGE_CONFIG: Record<string, { color: string; bg: string; border: string }> = {
   Legend: { color: "white", bg: "linear-gradient(135deg,#F59E0B,#D97706)", border: "#F59E0B" },
@@ -25,13 +17,18 @@ export default function LeaderboardPage() {
   const [lightMode, setLightMode] = useState(false);
   const [filter, setFilter] = useState<"national" | "class" | "subject">("national");
   const [timeframe, setTimeframe] = useState<"week" | "month" | "all">("all");
+  const [leaderboard, setLeaderboard] = useState<LeaderEntry[]>([]);
 
   useEffect(() => {
     document.body.className = lightMode ? "light-mode" : "";
   }, [lightMode]);
 
-  const top3 = EXTENDED_LEADERBOARD.slice(0, 3);
-  const rest = EXTENDED_LEADERBOARD.slice(3);
+  useEffect(() => {
+    fetchLeaderboard().then(setLeaderboard);
+  }, []);
+
+  const top3 = leaderboard.slice(0, 3);
+  const rest = leaderboard.slice(3);
 
   return (
     <div className="min-h-screen grid-bg" style={{ background: "var(--background)", color: "var(--foreground)" }}>
@@ -153,10 +150,10 @@ export default function LeaderboardPage() {
         <div className="glass-card overflow-hidden">
           <div className="p-5 border-b flex items-center justify-between" style={{ borderColor: "var(--card-border)" }}>
             <h2 className="font-black">Full Rankings</h2>
-            <div className="text-xs" style={{ color: "var(--text-muted)" }}>{EXTENDED_LEADERBOARD.length} participants</div>
+            <div className="text-xs" style={{ color: "var(--text-muted)" }}>{leaderboard.length} participants</div>
           </div>
           <div>
-            {EXTENDED_LEADERBOARD.map((entry, i) => {
+            {leaderboard.map((entry, i) => {
               const badge = BADGE_CONFIG[entry.badge] || BADGE_CONFIG.Explorer;
               const isYou = entry.name === "You";
               return (

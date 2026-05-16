@@ -2,7 +2,8 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import Navbar from "@/components/Navbar";
-import { ACHIEVEMENTS, getSubjectsForClass } from "@/lib/data";
+import { ACHIEVEMENTS } from "@/lib/data";
+import { fetchSubjects, fetchUserProfile, type Subject, type UserProfile } from "@/lib/api";
 
 const JOURNEY_MILESTONES = [
   { date: "Jan 2025", event: "Joined DC NextGen", icon: "🚀", color: "#7C3AED", completed: true },
@@ -27,7 +28,13 @@ const SKILL_TREE = [
 export default function ProfilePage() {
   const [lightMode, setLightMode] = useState(false);
   const [activeTab, setActiveTab] = useState<"overview" | "journey" | "achievements" | "skills">("overview");
-  const subjects = getSubjectsForClass(11);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+
+  useEffect(() => {
+    fetchSubjects(11).then(setSubjects);
+    fetchUserProfile().then(setProfile);
+  }, []);
 
   useEffect(() => {
     document.body.className = lightMode ? "light-mode" : "";

@@ -3,7 +3,8 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import Navbar from "@/components/Navbar";
-import { getChaptersForSubject, getSubjectsForClass } from "@/lib/data";
+import { getChaptersForSubject } from "@/lib/data";
+import { fetchSubjects, type Subject } from "@/lib/api";
 
 const DIFF_COLORS: Record<string, string> = {
   "Explorer Mode": "#10B981",
@@ -29,12 +30,16 @@ export default function SubjectPage() {
   const [lightMode, setLightMode] = useState(false);
   const [filter, setFilter] = useState<"all" | "completed" | "pending">("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [subjects, setSubjects] = useState<Subject[]>([]);
 
   useEffect(() => {
     document.body.className = lightMode ? "light-mode" : "";
   }, [lightMode]);
 
-  const subjects = getSubjectsForClass(classId);
+  useEffect(() => {
+    fetchSubjects(classId).then(setSubjects);
+  }, [classId]);
+
   const subject = subjects.find((s) => s.id === subjectId) || subjects[0];
   const chapters = getChaptersForSubject(subjectId, classId);
 
