@@ -80,7 +80,7 @@ export default function DCGalaxyPage() {
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       renderer.setSize(W, H);
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.1;
+      renderer.toneMappingExposure = 0.72;
       Object.assign(renderer.domElement.style, { position: "absolute", top: "0", left: "0" });
       el.appendChild(renderer.domElement);
 
@@ -89,7 +89,7 @@ export default function DCGalaxyPage() {
       if (Composer && RenderPassCls && BloomCls) {
         composer = new Composer(renderer);
         composer.addPass(new RenderPassCls(scene, camera));
-        const bloom = new BloomCls(new THREE.Vector2(W, H), 1.9, 0.55, 0.04);
+        const bloom = new BloomCls(new THREE.Vector2(W, H), 1.1, 0.35, 0.15);
         composer.addPass(bloom);
       }
 
@@ -112,9 +112,9 @@ export default function DCGalaxyPage() {
         const i3  = i * 3;
         let x = 0, y = 0, z = 0;
 
-        if (Math.random() < 0.1) {
+        if (Math.random() < 0.05) {
           // Bright core cluster
-          const r  = Math.random() ** 1.5 * 7;
+          const r  = Math.random() ** 1.5 * 5;
           const th = Math.random() * Math.PI * 2;
           const ph = Math.acos(2 * Math.random() - 1);
           x = r * Math.sin(ph) * Math.cos(th);
@@ -377,15 +377,22 @@ export default function DCGalaxyPage() {
               transform: "translate(-50%, -50%)",
               textAlign: "center", pointerEvents: "none", userSelect: "none",
             }}>
+              {/* Dark halo so text pops from bright galaxy core */}
+              <div style={{
+                position: "absolute", inset: "-60px -100px",
+                background: "radial-gradient(ellipse at center, rgba(0,0,0,0.72) 0%, rgba(0,0,0,0.45) 45%, transparent 75%)",
+                pointerEvents: "none",
+              }} />
               <h1 style={{
-                margin: 0, lineHeight: 0.88,
+                margin: 0, lineHeight: 0.88, position: "relative",
                 fontSize: "clamp(90px, 15vw, 170px)",
-                fontWeight: 900, letterSpacing: "0.14em", color: "#fff",
-                textShadow: "0 0 70px rgba(0,255,102,0.35), 0 0 140px rgba(0,255,102,0.14), 0 0 240px rgba(0,255,102,0.06)",
+                fontWeight: 900, letterSpacing: "0.14em", color: "#00FF66",
+                textShadow: "0 0 30px rgba(0,255,102,0.7), 0 0 80px rgba(0,255,102,0.3)",
               }}>DC</h1>
               <p style={{
-                margin: "18px 0 0", fontSize: "clamp(10px, 1.15vw, 13px)",
-                color: "rgba(255,255,255,0.42)", letterSpacing: "0.28em", fontWeight: 400,
+                margin: "20px 0 0", fontSize: "clamp(10px, 1.15vw, 13px)",
+                color: "rgba(255,255,255,0.55)", letterSpacing: "0.28em", fontWeight: 400,
+                position: "relative",
               }}>Designing the AI Learning System for Class 1–12.</p>
             </div>
 
