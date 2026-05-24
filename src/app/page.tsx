@@ -1,404 +1,542 @@
 "use client";
-import { useState } from "react";
+
+import { useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
-const CLASSES = Array.from({ length: 12 }, (_, i) => i + 1);
-
-const FEATURES = [
-  {
-    icon: "🎯",
-    title: "Adaptive Assessments",
-    desc: "AI-powered MCQ tests that adapt in real-time to your performance level and weak areas.",
-    color: "#7C3AED",
-  },
-  {
-    icon: "🧠",
-    title: "Theory Exams",
-    desc: "Comprehensive theory modules with instant AI feedback, concept maps, and revision tools.",
-    color: "#06B6D4",
-  },
-  {
-    icon: "📈",
-    title: "Journey Tracking",
-    desc: "Live progress tracking across all subjects with heatmaps, streaks, and rank board.",
-    color: "#F59E0B",
-  },
+// ─── Scene data ───────────────────────────────────────────────────────────────
+const CLUSTER_LABELS = [
+  { id: "discover",   text: "DISCOVER",    sub: "Explore subjects",    world: [-32, 4, -12] as [number, number, number], href: "/dashboard" },
+  { id: "study",      text: "STUDY",       sub: "Chapter content",     world: [28,  3, -22] as [number, number, number], href: "/dashboard" },
+  { id: "practice",   text: "PRACTICE",    sub: "AI assessments",      world: [33,  2,  18] as [number, number, number], href: "/dashboard" },
+  { id: "progress",   text: "PROGRESS",    sub: "Track your journey",  world: [-28, 3,  22] as [number, number, number], href: "/leaderboard" },
+  { id: "console",    text: "CONSOLE",     sub: "Study tools",         world: [4,   2, -42] as [number, number, number], href: "/login" },
 ];
 
-export default function LandingPage() {
-  const [mobileOpen, setMobileOpen] = useState(false);
+const CAM = [
+  { pos: [0,   80, 30] as const, look: [0, 0, 0] as const },
+  { pos: [-18, 32, 38] as const, look: [0, 0, 0] as const },
+  { pos: [8,    3, 48] as const, look: [0, 3, 0] as const },
+];
 
+interface Label2D {
+  id: string; text: string; sub: string; href: string;
+  x: number; y: number; visible: boolean;
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
+export default function DCGalaxyPage() {
+  const mountRef  = useRef<HTMLDivElement>(null);
+  const internals = useRef<{
+    camera?: any; renderer?: any; composer?: any; galaxy?: any; clock?: any;
+    targetPos:    { x: number; y: number; z: number };
+    targetLook:   { x: number; y: number; z: number };
+    currentLook:  { x: number; y: number; z: number };
+    currentState: number;
+    raf:          number;
+    cleanupResize?: () => void;
+  }>({
+    targetPos:    { x: 0, y: 80, z: 30 },
+    targetLook:   { x: 0, y: 0,  z: 0  },
+    currentLook:  { x: 0, y: 0,  z: 0  },
+    currentState: 0,
+    raf:          0,
+  });
+
+  const [progress, setProgress] = useState(0);
+  const [loaded,   setLoaded]   = useState(false);
+  const [camState, setCamState] = useState(0);
+  const [labels,   setLabels]   = useState<Label2D[]>([]);
+  const router = useRouter();
+
+  // ── Three.js init ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    let dead = false;
+
+    (async () => {
+      const THREE = await import("three");
+      if (dead || !mountRef.current) return;
+
+      // Optional bloom (graceful fallback if import fails)
+      let Composer: any, RenderPassCls: any, BloomCls: any;
+      try {
+        ({ EffectComposer: Composer }    = await import("three/examples/jsm/postprocessing/EffectComposer.js"));
+        ({ RenderPass:  RenderPassCls } = await import("three/examples/jsm/postprocessing/RenderPass.js"));
+        ({ UnrealBloomPass: BloomCls }  = await import("three/examples/jsm/postprocessing/UnrealBloomPass.js"));
+      } catch { /* run without bloom */ }
+
+      if (dead || !mountRef.current) return;
+      const el = mountRef.current;
+      const W  = el.clientWidth;
+      const H  = el.clientHeight;
+
+      // Scene & camera
+      const scene  = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(55, W / H, 0.1, 1000);
+      camera.position.set(0, 80, 30);
+
+      // Renderer
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(W, H);
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.1;
+      Object.assign(renderer.domElement.style, { position: "absolute", top: "0", left: "0" });
+      el.appendChild(renderer.domElement);
+
+      // Bloom composer
+      let composer: any = null;
+      if (Composer && RenderPassCls && BloomCls) {
+        composer = new Composer(renderer);
+        composer.addPass(new RenderPassCls(scene, camera));
+        const bloom = new BloomCls(new THREE.Vector2(W, H), 1.9, 0.55, 0.04);
+        composer.addPass(bloom);
+      }
+
+      // ── Galaxy geometry ──────────────────────────────────────────────────────
+      const N     = 160_000;
+      const MAX_R = 65;
+      const ARMS  = 4;
+      const pos   = new Float32Array(N * 3);
+      const col   = new Float32Array(N * 3);
+
+      // Box-Muller Gaussian
+      const gauss = () => {
+        let u = 0, v = 0;
+        while (!u) u = Math.random();
+        while (!v) v = Math.random();
+        return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+      };
+
+      for (let i = 0; i < N; i++) {
+        const i3  = i * 3;
+        let x = 0, y = 0, z = 0;
+
+        if (Math.random() < 0.1) {
+          // Bright core cluster
+          const r  = Math.random() ** 1.5 * 7;
+          const th = Math.random() * Math.PI * 2;
+          const ph = Math.acos(2 * Math.random() - 1);
+          x = r * Math.sin(ph) * Math.cos(th);
+          y = r * Math.sin(ph) * Math.sin(th) * 0.10;
+          z = r * Math.cos(ph);
+        } else {
+          // Spiral arm
+          const arm       = Math.floor(Math.random() * ARMS);
+          const baseAngle = (arm / ARMS) * Math.PI * 2;
+          const r         = Math.random() ** 0.45 * MAX_R;
+          let   angle     = baseAngle + (r / MAX_R) * 3.6;
+          angle += gauss() * ((r / MAX_R) * 0.42 + 0.06);
+          x = r * Math.cos(angle);
+          y = gauss() * (1.2 - r / MAX_R) * 0.45;
+          z = r * Math.sin(angle);
+        }
+
+        pos[i3] = x; pos[i3 + 1] = y; pos[i3 + 2] = z;
+
+        // Colour: white core → neon green → dark outer
+        const d = Math.sqrt(x * x + z * z) / MAX_R;
+        let r_ = 0, g_ = 0, b_ = 0;
+        if (d < 0.04) {
+          r_ = 1; g_ = 1; b_ = 1;
+        } else if (d < 0.14) {
+          const t = (d - 0.04) / 0.10;
+          r_ = 1 - t * 0.55; g_ = 1; b_ = 1 - t;
+        } else if (d < 0.38) {
+          const t = (d - 0.14) / 0.24;
+          r_ = 0.45 - t * 0.38; g_ = 1; b_ = 0.45 - t * 0.40;
+        } else {
+          const t = Math.min((d - 0.38) / 0.62, 1);
+          r_ = 0.07 * (1 - t); g_ = 0.48 - t * 0.44; b_ = 0.07 * (1 - t);
+        }
+        col[i3] = r_; col[i3 + 1] = g_; col[i3 + 2] = b_;
+      }
+
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+      geo.setAttribute("color",    new THREE.BufferAttribute(col, 3));
+
+      const mat = new THREE.PointsMaterial({
+        size: 0.09, vertexColors: true, sizeAttenuation: true,
+        transparent: true, opacity: 0.88,
+        depthWrite: false, blending: THREE.AdditiveBlending,
+      });
+
+      const galaxy = new THREE.Points(geo, mat);
+      scene.add(galaxy);
+
+      // Save into ref
+      internals.current.camera   = camera;
+      internals.current.renderer = renderer;
+      internals.current.composer = composer;
+      internals.current.galaxy   = galaxy;
+      internals.current.clock    = new THREE.Clock();
+
+      // Resize
+      const onResize = () => {
+        const W = el.clientWidth, H = el.clientHeight;
+        camera.aspect = W / H;
+        camera.updateProjectionMatrix();
+        renderer.setSize(W, H);
+        composer?.setSize(W, H);
+      };
+      window.addEventListener("resize", onResize);
+      internals.current.cleanupResize = () => window.removeEventListener("resize", onResize);
+
+      // Fake loading progress
+      let p = 0;
+      const iv = setInterval(() => {
+        p = Math.min(p + Math.random() * 18 + 6, 100);
+        if (!dead) setProgress(p);
+        if (p >= 100) {
+          clearInterval(iv);
+          setTimeout(() => { if (!dead) setLoaded(true); }, 700);
+        }
+      }, 90);
+
+      // ── Render loop ──────────────────────────────────────────────────────────
+      const lookV = new THREE.Vector3();
+      const projV = new THREE.Vector3();
+      let frame   = 0;
+
+      const animate = () => {
+        if (dead) return;
+        internals.current.raf = requestAnimationFrame(animate);
+        frame++;
+
+        const { targetPos, targetLook, currentLook, clock } = internals.current;
+        const t = clock.getElapsedTime();
+
+        galaxy.rotation.y = t * 0.018;
+
+        // Smooth camera lerp
+        camera.position.x += (targetPos.x - camera.position.x) * 0.03;
+        camera.position.y += (targetPos.y - camera.position.y) * 0.03;
+        camera.position.z += (targetPos.z - camera.position.z) * 0.03;
+
+        currentLook.x += (targetLook.x - currentLook.x) * 0.03;
+        currentLook.y += (targetLook.y - currentLook.y) * 0.03;
+        currentLook.z += (targetLook.z - currentLook.z) * 0.03;
+
+        lookV.set(currentLook.x, currentLook.y, currentLook.z);
+        camera.lookAt(lookV);
+
+        // Project 3-D label positions to screen every 4th frame
+        if (frame % 4 === 0) {
+          const W  = el.clientWidth;
+          const H  = el.clientHeight;
+          const nl = CLUSTER_LABELS.map(lb => {
+            projV.set(lb.world[0], lb.world[1], lb.world[2]);
+            projV.project(camera);
+            return {
+              ...lb,
+              x:       (projV.x *  0.5 + 0.5) * W,
+              y:       (projV.y * -0.5 + 0.5) * H,
+              visible: projV.z < 1,
+            };
+          });
+          setLabels(nl);
+        }
+
+        if (composer) composer.render();
+        else renderer.render(scene, camera);
+      };
+      animate();
+    })();
+
+    return () => {
+      dead = true;
+      const { raf, renderer, cleanupResize } = internals.current;
+      if (raf) cancelAnimationFrame(raf);
+      cleanupResize?.();
+      if (renderer?.domElement?.parentNode) {
+        renderer.domElement.parentNode.removeChild(renderer.domElement);
+      }
+      renderer?.dispose();
+    };
+  }, []);
+
+  // ── Camera state machine ───────────────────────────────────────────────────
+  const goCam = useCallback((s: number) => {
+    const c = CAM[s];
+    if (!c) return;
+    internals.current.targetPos    = { x: c.pos[0],  y: c.pos[1],  z: c.pos[2]  };
+    internals.current.targetLook   = { x: c.look[0], y: c.look[1], z: c.look[2] };
+    internals.current.currentState = s;
+    setCamState(s);
+  }, []);
+
+  // Scroll to advance states
+  useEffect(() => {
+    let acc = 0;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      acc += e.deltaY;
+      if (acc >  260) { goCam(Math.min(internals.current.currentState + 1, 2)); acc = 0; }
+      if (acc < -260) { goCam(Math.max(internals.current.currentState - 1, 0)); acc = 0; }
+    };
+    window.addEventListener("wheel", onWheel, { passive: false });
+    return () => window.removeEventListener("wheel", onWheel);
+  }, [goCam]);
+
+  // ── JSX ────────────────────────────────────────────────────────────────────
   return (
-    <div
-      style={{
-        background: "linear-gradient(160deg, #070B14 0%, #0A0F1E 50%, #080C18 100%)",
-        minHeight: "100vh",
-        color: "#fff",
-        fontFamily: "var(--font-geist-sans), -apple-system, sans-serif",
-        overflowX: "hidden",
-      }}
-    >
-      {/* ── NAVBAR ── */}
-      <nav
-        style={{
-          position: "fixed", top: 0, left: 0, right: 0, zIndex: 50, height: 64,
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "0 40px",
-          background: "rgba(7,11,20,0.85)",
-          backdropFilter: "blur(24px)",
-          borderBottom: "1px solid rgba(255,255,255,0.06)",
-        }}
-      >
-        {/* Logo */}
-        <Link href="/" style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: 12 }}>
-          <div
-            style={{
-              width: 38, height: 38, borderRadius: 10,
-              background: "linear-gradient(135deg, #7C3AED, #06B6D4)",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontWeight: 900, fontSize: 13, color: "white",
-              boxShadow: "0 0 20px rgba(124,58,237,0.4)",
-            }}
-          >DC</div>
-          <div>
-            <div style={{
-              fontWeight: 900, fontSize: 16, letterSpacing: "-0.3px",
-              background: "linear-gradient(135deg, #A78BFA, #06B6D4)",
-              WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-            }}>DC NextGen</div>
-            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", lineHeight: 1 }}>AI Learning Platform</div>
-          </div>
-        </Link>
+    <div style={{
+      position: "fixed", inset: 0, background: "#000", overflow: "hidden",
+      fontFamily: "'Inter', 'Space Grotesk', -apple-system, sans-serif",
+    }}>
+      {/* Three.js canvas mount */}
+      <div ref={mountRef} style={{ position: "absolute", inset: 0 }} />
 
-        {/* Desktop nav links */}
-        <div style={{ display: "flex", gap: 4, alignItems: "center" }} className="hidden md:flex">
-          {[
-            { label: "Dashboard", href: "/dashboard" },
-            { label: "Classes", href: "#classes" },
-            { label: "Leaderboard", href: "/leaderboard" },
-          ].map((l) => (
-            <Link key={l.label} href={l.href}
+      {/* ── Preloader ──────────────────────────────────────────────────────────── */}
+      <div style={{
+        position: "absolute", inset: 0, zIndex: 100, background: "#000",
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 22,
+        opacity: loaded ? 0 : 1, pointerEvents: loaded ? "none" : "all",
+        transition: "opacity 1s ease",
+      }}>
+        {/* Circular progress ring */}
+        <div style={{ position: "relative", width: 76, height: 76 }}>
+          <svg width="76" height="76" viewBox="0 0 76 76" style={{ transform: "rotate(-90deg)" }}>
+            <circle cx="38" cy="38" r="32" fill="none" stroke="rgba(0,255,102,0.10)" strokeWidth="2" />
+            <circle
+              cx="38" cy="38" r="32" fill="none" stroke="#00FF66" strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeDasharray={`${2 * Math.PI * 32}`}
+              strokeDashoffset={`${2 * Math.PI * 32 * (1 - progress / 100)}`}
               style={{
-                padding: "7px 18px", borderRadius: 8, fontSize: 14,
-                color: "rgba(255,255,255,0.6)", textDecoration: "none", fontWeight: 500,
-                transition: "all 0.2s",
+                transition: "stroke-dashoffset 0.12s ease",
+                filter: "drop-shadow(0 0 6px #00FF66) drop-shadow(0 0 14px rgba(0,255,102,0.4))",
               }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "#A78BFA"; (e.currentTarget as HTMLElement).style.background = "rgba(124,58,237,0.1)"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.6)"; (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-            >{l.label}</Link>
-          ))}
-        </div>
-
-        {/* CTAs */}
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <Link href="/login"
-            style={{
-              padding: "8px 22px", borderRadius: 9, fontSize: 14, fontWeight: 600,
-              border: "1px solid rgba(255,255,255,0.15)", color: "rgba(255,255,255,0.85)",
-              textDecoration: "none", transition: "all 0.2s",
-            }}
-            className="hidden sm:block"
-          >Login</Link>
-          <Link href="/login"
-            style={{
-              padding: "8px 22px", borderRadius: 9, fontSize: 14, fontWeight: 700,
-              background: "linear-gradient(135deg, #7C3AED, #5B21B6)",
-              color: "white", textDecoration: "none",
-              boxShadow: "0 4px 20px rgba(124,58,237,0.35)",
-            }}
-          >Sign Up Free</Link>
-          <button
-            onClick={() => setMobileOpen(!mobileOpen)}
-            style={{ background: "none", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8, width: 36, height: 36, color: "white", cursor: "pointer", fontSize: 18 }}
-            className="md:hidden"
-          >{mobileOpen ? "✕" : "☰"}</button>
-        </div>
-      </nav>
-
-      {/* Mobile menu */}
-      {mobileOpen && (
-        <div style={{
-          position: "fixed", top: 64, left: 0, right: 0, zIndex: 40,
-          background: "rgba(7,11,20,0.98)", backdropFilter: "blur(20px)",
-          borderBottom: "1px solid rgba(255,255,255,0.08)", padding: 16,
-        }}>
-          {[{ label: "Dashboard", href: "/dashboard" }, { label: "Classes", href: "#classes" }, { label: "Login", href: "/login" }].map((l) => (
-            <Link key={l.label} href={l.href} onClick={() => setMobileOpen(false)}
-              style={{ display: "block", padding: "12px 16px", borderRadius: 10, color: "rgba(255,255,255,0.8)", textDecoration: "none", fontSize: 15, fontWeight: 600, marginBottom: 4, background: "rgba(255,255,255,0.04)" }}
-            >{l.label}</Link>
-          ))}
-        </div>
-      )}
-
-      {/* ── HERO ── */}
-      <section
-        style={{
-          maxWidth: 1200, margin: "0 auto", padding: "130px 40px 80px",
-          display: "grid", gridTemplateColumns: "1fr 1fr", gap: 80, alignItems: "center",
-        }}
-        className="hero-responsive"
-      >
-        {/* Left content */}
-        <div>
+            />
+          </svg>
           <div style={{
-            display: "inline-flex", alignItems: "center", gap: 8,
-            padding: "6px 16px", borderRadius: 100, marginBottom: 24,
-            background: "rgba(124,58,237,0.12)", border: "1px solid rgba(124,58,237,0.3)",
-            fontSize: 11, fontWeight: 700, letterSpacing: "0.3em", textTransform: "uppercase",
-            color: "rgba(167,139,250,0.9)",
+            position: "absolute", inset: 0,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 11, fontWeight: 700, color: "#00FF66", letterSpacing: "0.06em",
           }}>
-            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#A78BFA", display: "inline-block" }} />
-            DC EDUVERSE
-          </div>
-
-          <h1 style={{ fontSize: 68, fontWeight: 900, lineHeight: 1.06, letterSpacing: "-2px", marginBottom: 24 }}>
-            Future of<br />
-            <span style={{
-              background: "linear-gradient(135deg, #fff 0%, #A78BFA 50%, #06B6D4 100%)",
-              WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-            }}>Learning.</span>
-          </h1>
-
-          <p style={{ fontSize: 17, color: "rgba(255,255,255,0.58)", lineHeight: 1.75, maxWidth: 470, marginBottom: 40 }}>
-            AI powered education platform for Class 1–12 with secure assessments, adaptive learning, theory exams, journey tracking and premium student experiences.
-          </p>
-
-          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-            <Link href="/login"
-              style={{
-                padding: "15px 40px", borderRadius: 11, fontWeight: 800, fontSize: 16,
-                background: "white", color: "#080C14", textDecoration: "none",
-                boxShadow: "0 8px 30px rgba(255,255,255,0.15)",
-                transition: "all 0.2s",
-              }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 12px 40px rgba(255,255,255,0.22)"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = "translateY(0)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 30px rgba(255,255,255,0.15)"; }}
-            >Start Learning</Link>
-            <Link href="/dashboard"
-              style={{
-                padding: "15px 40px", borderRadius: 11, fontWeight: 700, fontSize: 16,
-                border: "2px solid rgba(255,255,255,0.22)", color: "rgba(255,255,255,0.85)",
-                textDecoration: "none", transition: "all 0.2s",
-              }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(167,139,250,0.5)"; (e.currentTarget as HTMLElement).style.color = "#A78BFA"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.22)"; (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.85)"; }}
-            >Explore Demo</Link>
-          </div>
-
-          {/* Trust indicators */}
-          <div style={{ display: "flex", gap: 28, marginTop: 44, alignItems: "center" }}>
-            {[["12K+", "Students"], ["98%", "Satisfaction"], ["50K+", "Tests Taken"]].map(([val, label]) => (
-              <div key={label}>
-                <div style={{ fontSize: 22, fontWeight: 900, color: "#A78BFA" }}>{val}</div>
-                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{label}</div>
-              </div>
-            ))}
+            {Math.round(progress)}%
           </div>
         </div>
+        <div style={{ fontSize: 9, letterSpacing: "0.55em", color: "rgba(0,255,102,0.4)", textTransform: "uppercase" }}>
+          Initialising DC
+        </div>
+      </div>
 
-        {/* Right: Student Journey card */}
-        <div
-          style={{
-            background: "rgba(255,255,255,0.035)",
-            border: "1px solid rgba(255,255,255,0.09)",
-            borderRadius: 24, padding: 36,
-            backdropFilter: "blur(24px)",
-            boxShadow: "0 30px 80px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.07)",
-            position: "relative", overflow: "hidden",
-          }}
-        >
-          {/* Glow decoration */}
-          <div style={{
-            position: "absolute", top: -60, right: -60, width: 200, height: 200,
-            borderRadius: "50%", background: "radial-gradient(circle, rgba(124,58,237,0.18), transparent 70%)",
-            pointerEvents: "none",
-          }} />
+      {/* ── Main UI overlay ────────────────────────────────────────────────────── */}
+      <div style={{
+        position: "absolute", inset: 0, zIndex: 10,
+        opacity: loaded ? 1 : 0, transition: "opacity 1.2s ease 0.3s",
+        pointerEvents: loaded ? "all" : "none",
+      }}>
 
-          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 12, fontWeight: 500 }}>Student Journey</div>
-          <div style={{ fontSize: 76, fontWeight: 900, lineHeight: 1, marginBottom: 8, letterSpacing: "-3px" }}>78%</div>
-          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginBottom: 18 }}>Overall completion this semester</div>
-
-          {/* Progress bar */}
-          <div style={{ height: 8, background: "rgba(255,255,255,0.08)", borderRadius: 100, marginBottom: 28, overflow: "hidden" }}>
+        {/* ── Navbar ─────────────────────────────────────────────────────────── */}
+        <nav style={{
+          position: "absolute", top: 0, left: 0, right: 0, zIndex: 20,
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "22px 44px",
+        }}>
+          {/* Logo */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{
-              height: "100%", width: "78%",
-              background: "linear-gradient(90deg, #7C3AED, #06B6D4)",
-              borderRadius: 100,
-              boxShadow: "0 0 12px rgba(124,58,237,0.5)",
+              width: 7, height: 7, borderRadius: "50%", background: "#00FF66",
+              boxShadow: "0 0 10px #00FF66, 0 0 22px rgba(0,255,102,0.4)",
             }} />
+            <span style={{
+              fontSize: 12, fontWeight: 700, color: "rgba(0,255,102,0.85)", letterSpacing: "0.38em",
+            }}>DC</span>
           </div>
 
-          {/* Mini stats */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-            {[
-              { val: "17", label: "Day Streak", icon: "🔥", color: "#F59E0B" },
-              { val: "1,280", label: "XP Points", icon: "⚡", color: "#A78BFA" },
-            ].map(({ val, label, icon, color }) => (
-              <div key={label} style={{
-                background: "rgba(255,255,255,0.04)",
-                border: "1px solid rgba(255,255,255,0.07)",
-                borderRadius: 14, padding: "18px 20px",
-              }}>
-                <div style={{ fontSize: 13, marginBottom: 6 }}>{icon}</div>
-                <div style={{ fontSize: 26, fontWeight: 900, color, lineHeight: 1 }}>{val}</div>
-                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>{label}</div>
-              </div>
+          {/* Nav links */}
+          <div style={{ display: "flex", gap: 34, fontSize: 10, color: "rgba(255,255,255,0.3)", letterSpacing: "0.22em", fontWeight: 500 }}>
+            {([["SUBJECTS", "/dashboard"], ["CHAPTERS", "/dashboard"], ["LEADERBOARD", "/leaderboard"]] as const).map(([l, h]) => (
+              <Link key={l} href={h} style={{ color: "inherit", textDecoration: "none", transition: "color 0.2s" }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#00FF66"; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.3)"; }}
+              >{l}</Link>
             ))}
           </div>
 
-          {/* Recent activity */}
-          <div style={{ marginTop: 20, paddingTop: 18, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
-            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginBottom: 12 }}>Recent Activity</div>
-            {[
-              { sub: "Physics", ch: "Kinematics", score: "75%", color: "#EF4444" },
-              { sub: "Maths", ch: "Sets & Relations", score: "95%", color: "#3B82F6" },
-            ].map((a) => (
-              <div key={a.ch} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <div style={{ width: 6, height: 6, borderRadius: "50%", background: a.color }} />
-                  <div style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", fontWeight: 500 }}>{a.sub} — {a.ch}</div>
-                </div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: a.color }}>{a.score}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+          {/* CTA */}
+          <Link href="/login" style={{
+            padding: "9px 22px", borderRadius: 40, fontSize: 10, fontWeight: 700,
+            border: "1px solid rgba(0,255,102,0.35)", color: "#00FF66", textDecoration: "none",
+            letterSpacing: "0.25em", background: "rgba(0,255,102,0.04)", transition: "all 0.25s",
+          }}
+            onMouseEnter={e => { const el = e.currentTarget as HTMLElement; el.style.background = "rgba(0,255,102,0.14)"; el.style.borderColor = "rgba(0,255,102,0.6)"; }}
+            onMouseLeave={e => { const el = e.currentTarget as HTMLElement; el.style.background = "rgba(0,255,102,0.04)"; el.style.borderColor = "rgba(0,255,102,0.35)"; }}
+          >LAUNCH APP</Link>
+        </nav>
 
-      {/* ── FEATURES ── */}
-      <section style={{ maxWidth: 1200, margin: "0 auto", padding: "20px 40px 80px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 20 }}>
-          {FEATURES.map((f) => (
-            <div key={f.title}
-              style={{
-                background: "rgba(255,255,255,0.03)",
-                border: "1px solid rgba(255,255,255,0.07)",
-                borderRadius: 20, padding: "28px 28px",
-                transition: "all 0.25s ease",
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLElement).style.background = `rgba(${f.color === "#7C3AED" ? "124,58,237" : f.color === "#06B6D4" ? "6,182,212" : "245,158,11"},0.08)`;
-                (e.currentTarget as HTMLElement).style.borderColor = `${f.color}35`;
-                (e.currentTarget as HTMLElement).style.transform = "translateY(-4px)";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.03)";
-                (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.07)";
-                (e.currentTarget as HTMLElement).style.transform = "translateY(0)";
-              }}
-            >
-              <div style={{
-                width: 48, height: 48, borderRadius: 14, fontSize: 22,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                background: `${f.color}1A`, border: `1px solid ${f.color}30`,
-                marginBottom: 18,
-              }}>{f.icon}</div>
-              <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 10 }}>{f.title}</div>
-              <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", lineHeight: 1.65 }}>{f.desc}</div>
+        {/* ── STATE 0: Hero ───────────────────────────────────────────────────── */}
+        {camState === 0 && (
+          <>
+            {/* Central headline */}
+            <div style={{
+              position: "absolute", top: "42%", left: "50%",
+              transform: "translate(-50%, -50%)",
+              textAlign: "center", pointerEvents: "none", userSelect: "none",
+            }}>
+              <h1 style={{
+                margin: 0, lineHeight: 0.88,
+                fontSize: "clamp(90px, 15vw, 170px)",
+                fontWeight: 900, letterSpacing: "0.14em", color: "#fff",
+                textShadow: "0 0 70px rgba(0,255,102,0.35), 0 0 140px rgba(0,255,102,0.14), 0 0 240px rgba(0,255,102,0.06)",
+              }}>DC</h1>
+              <p style={{
+                margin: "18px 0 0", fontSize: "clamp(10px, 1.15vw, 13px)",
+                color: "rgba(255,255,255,0.42)", letterSpacing: "0.28em", fontWeight: 400,
+              }}>Designing the AI Learning System for Class 1–12.</p>
             </div>
-          ))}
-        </div>
-      </section>
 
-      {/* ── CHOOSE YOUR CLASS ── */}
-      <section id="classes" style={{ maxWidth: 1200, margin: "0 auto", padding: "10px 40px 100px" }}>
-        <div style={{ marginBottom: 40 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.25em", textTransform: "uppercase", color: "rgba(167,139,250,0.7)", marginBottom: 12 }}>
-            ALL CLASSES
-          </div>
-          <h2 style={{ fontSize: 38, fontWeight: 900, letterSpacing: "-1px" }}>Choose Your Class</h2>
-        </div>
+            {/* Bottom row */}
+            <div style={{
+              position: "absolute", bottom: 38, left: 0, right: 0,
+              display: "flex", justifyContent: "space-between", alignItems: "flex-end",
+              padding: "0 44px",
+            }}>
+              <p style={{
+                margin: 0, maxWidth: 270, fontSize: 11,
+                color: "rgba(255,255,255,0.22)", lineHeight: 1.95, letterSpacing: "0.07em",
+              }}>
+                A complete AI-powered education system.<br />
+                Every class. Every subject. Every chapter.<br />
+                Generated live, just for you.
+              </p>
+              <div style={{ textAlign: "right" }}>
+                <button onClick={() => goCam(1)} style={{
+                  background: "none", border: "1px solid rgba(0,255,102,0.38)",
+                  color: "#00FF66", padding: "13px 34px", borderRadius: 2,
+                  fontSize: 10, fontWeight: 700, cursor: "pointer", letterSpacing: "0.38em",
+                  boxShadow: "0 0 28px rgba(0,255,102,0.08), inset 0 0 24px rgba(0,255,102,0.03)",
+                  transition: "all 0.3s",
+                }}
+                  onMouseEnter={e => {
+                    const el = e.currentTarget as HTMLElement;
+                    el.style.background = "rgba(0,255,102,0.08)";
+                    el.style.boxShadow  = "0 0 44px rgba(0,255,102,0.22), inset 0 0 32px rgba(0,255,102,0.06)";
+                    el.style.borderColor = "rgba(0,255,102,0.7)";
+                  }}
+                  onMouseLeave={e => {
+                    const el = e.currentTarget as HTMLElement;
+                    el.style.background = "none";
+                    el.style.boxShadow  = "0 0 28px rgba(0,255,102,0.08), inset 0 0 24px rgba(0,255,102,0.03)";
+                    el.style.borderColor = "rgba(0,255,102,0.38)";
+                  }}
+                >EXPLORE SYSTEM</button>
+                <div style={{ marginTop: 10, fontSize: 9, color: "rgba(255,255,255,0.16)", letterSpacing: "0.28em" }}>
+                  SCROLL TO NAVIGATE ↓
+                </div>
+              </div>
+            </div>
+          </>
+        )}
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(6,1fr)", gap: 14 }}>
-          {CLASSES.map((cls) => (
-            <Link key={cls} href={`/class/class-${cls}`} style={{ textDecoration: "none" }}>
-              <div
+        {/* ── STATE 1: Cluster / Roadmap ─────────────────────────────────────── */}
+        {camState === 1 && (
+          <>
+            <div style={{
+              position: "absolute", top: "11%", left: "50%",
+              transform: "translateX(-50%)", textAlign: "center", pointerEvents: "none",
+            }}>
+              <div style={{ fontSize: 9, color: "rgba(0,255,102,0.5)", letterSpacing: "0.52em", marginBottom: 10 }}>
+                THE DC NEXGEN
+              </div>
+              <h2 style={{ margin: 0, fontSize: "clamp(20px, 2.8vw, 34px)", fontWeight: 600, color: "white", letterSpacing: "0.08em" }}>
+                Study in five steps.
+              </h2>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.22)", marginTop: 8, letterSpacing: "0.35em" }}>
+                ROADMAP
+              </div>
+            </div>
+
+            {/* Floating cluster labels projected from 3-D world space */}
+            {labels.map(lb => lb.visible && (
+              <div key={lb.id}
+                onClick={() => router.push(lb.href)}
                 style={{
-                  background: "rgba(255,255,255,0.035)",
-                  border: "1px solid rgba(255,255,255,0.08)",
-                  borderRadius: 20, padding: "26px 18px 22px",
-                  cursor: "pointer", transition: "all 0.25s cubic-bezier(0.34,1.56,0.64,1)",
-                  color: "white",
-                }}
-                onMouseEnter={(e) => {
-                  const el = e.currentTarget as HTMLElement;
-                  el.style.background = "rgba(124,58,237,0.14)";
-                  el.style.borderColor = "rgba(124,58,237,0.35)";
-                  el.style.transform = "translateY(-6px) scale(1.02)";
-                  el.style.boxShadow = "0 20px 50px rgba(124,58,237,0.2)";
-                }}
-                onMouseLeave={(e) => {
-                  const el = e.currentTarget as HTMLElement;
-                  el.style.background = "rgba(255,255,255,0.035)";
-                  el.style.borderColor = "rgba(255,255,255,0.08)";
-                  el.style.transform = "translateY(0) scale(1)";
-                  el.style.boxShadow = "none";
+                  position: "absolute", left: lb.x, top: lb.y,
+                  transform: "translate(-50%, -50%)",
+                  cursor: "pointer", textAlign: "center",
                 }}
               >
-                <div style={{ fontSize: 19, fontWeight: 800, marginBottom: 10, letterSpacing: "-0.3px" }}>
-                  Class {cls}
+                <div style={{
+                  width: 5, height: 5, borderRadius: "50%", background: "#00FF66",
+                  margin: "0 auto 9px",
+                  boxShadow: "0 0 8px #00FF66, 0 0 18px rgba(0,255,102,0.55)",
+                }} />
+                <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.9)", letterSpacing: "0.28em", whiteSpace: "nowrap" }}>
+                  {lb.text}
                 </div>
-                <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.4)", lineHeight: 1.8, fontWeight: 500 }}>
-                  Subjects&nbsp;•&nbsp;Assessments&nbsp;•&nbsp;Progress
+                <div style={{ fontSize: 9, color: "rgba(0,255,102,0.45)", letterSpacing: "0.08em", marginTop: 3 }}>
+                  {lb.sub}
                 </div>
               </div>
-            </Link>
-          ))}
-        </div>
+            ))}
+          </>
+        )}
 
-        {/* CTA below class grid */}
-        <div style={{ textAlign: "center", marginTop: 60 }}>
-          <div style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", marginBottom: 20 }}>
-            Not sure where to start? Take our AI placement test.
-          </div>
-          <Link href="/login"
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 10,
-              padding: "14px 36px", borderRadius: 12, fontWeight: 700, fontSize: 15,
-              background: "linear-gradient(135deg, #7C3AED, #06B6D4)",
-              color: "white", textDecoration: "none",
-              boxShadow: "0 8px 30px rgba(124,58,237,0.35)",
-            }}
-          >
-            🚀 Start Free Today
-          </Link>
-        </div>
-      </section>
-
-      {/* ── FOOTER ── */}
-      <footer style={{
-        borderTop: "1px solid rgba(255,255,255,0.06)",
-        padding: "40px 40px",
-        display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16,
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        {/* ── STATE 2: Immersive / Inside galaxy ────────────────────────────── */}
+        {camState === 2 && (
           <div style={{
-            width: 32, height: 32, borderRadius: 8,
-            background: "linear-gradient(135deg, #7C3AED, #06B6D4)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontWeight: 900, fontSize: 11, color: "white",
-          }}>DC</div>
-          <span style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", fontWeight: 500 }}>DC NextGen — AI-Powered K-12 Learning</span>
-        </div>
-        <div style={{ display: "flex", gap: 28 }}>
-          {[["Dashboard", "/dashboard"], ["Classes", "#classes"], ["Login", "/login"], ["Sign Up", "/login"]].map(([label, href]) => (
-            <Link key={label} href={href}
-              style={{ fontSize: 13, color: "rgba(255,255,255,0.35)", textDecoration: "none", fontWeight: 500 }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = "#A78BFA"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.35)"; }}
-            >{label}</Link>
+            position: "absolute", inset: 0,
+            display: "flex", flexDirection: "column", justifyContent: "center",
+            padding: "0 68px",
+          }}>
+            <div style={{
+              fontSize: "clamp(14px, 1.8vw, 22px)",
+              color: "rgba(255,255,255,0.42)", lineHeight: 2.3, letterSpacing: "0.05em", marginBottom: 58,
+            }}>
+              Twelve classes.<br />Fifty subjects.<br />Unlimited knowledge.
+            </div>
+            <div style={{ display: "flex", gap: 60, flexWrap: "wrap", marginBottom: 62 }}>
+              {[
+                "Three views. One platform.\nAI-powered content.",
+                "Live across twelve classes,\nevery subject, every chapter.",
+                "Real assessments.\nAI feedback. Instant results.",
+              ].map((t, i) => (
+                <div key={i} style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", lineHeight: 1.95, maxWidth: 195, letterSpacing: "0.06em", whiteSpace: "pre-line" }}>
+                  {t}
+                </div>
+              ))}
+            </div>
+            <Link href="/login" style={{
+              display: "inline-flex", alignItems: "center", gap: 14,
+              fontSize: 11, color: "#00FF66", textDecoration: "none",
+              letterSpacing: "0.38em", fontWeight: 700,
+              borderBottom: "1px solid rgba(0,255,102,0.28)", paddingBottom: 6,
+              width: "fit-content", transition: "all 0.25s",
+            }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(0,255,102,0.65)"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(0,255,102,0.28)"; }}
+            >
+              START YOUR JOURNEY →
+            </Link>
+          </div>
+        )}
+
+        {/* ── Navigation dots (right edge) ───────────────────────────────────── */}
+        <div style={{
+          position: "absolute", right: 26, top: "50%", transform: "translateY(-50%)",
+          display: "flex", flexDirection: "column", gap: 11, alignItems: "center",
+        }}>
+          {[0, 1, 2].map(s => (
+            <button key={s} onClick={() => goCam(s)} style={{
+              width: camState === s ? 8 : 4, height: camState === s ? 8 : 4,
+              borderRadius: "50%", border: "none", cursor: "pointer", padding: 0,
+              background: camState === s ? "#00FF66" : "rgba(255,255,255,0.18)",
+              boxShadow: camState === s ? "0 0 10px #00FF66, 0 0 18px rgba(0,255,102,0.4)" : "none",
+              transition: "all 0.35s ease",
+            }} />
           ))}
         </div>
-        <div style={{ fontSize: 13, color: "rgba(255,255,255,0.25)" }}>© 2025 DC Eduverse</div>
-      </footer>
 
-      <style>{`
-        @media (max-width: 768px) {
-          .hero-responsive { grid-template-columns: 1fr !important; gap: 40px !important; padding: 100px 20px 60px !important; }
-          #classes > div:first-child { margin-bottom: 28px !important; }
-          #classes > div:nth-child(2) { grid-template-columns: repeat(3,1fr) !important; }
-        }
-      `}</style>
+        {/* ── Subtle corner vignette ─────────────────────────────────────────── */}
+        <div style={{
+          position: "absolute", inset: 0, pointerEvents: "none",
+          background: "radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.55) 100%)",
+        }} />
+      </div>
     </div>
   );
 }

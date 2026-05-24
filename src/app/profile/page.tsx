@@ -1,9 +1,11 @@
 "use client";
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import Navbar from "@/components/Navbar";
+import { useSession } from "next-auth/react";
 import { ACHIEVEMENTS } from "@/lib/data";
-import { fetchSubjects, fetchUserProfile, type Subject, type UserProfile } from "@/lib/api";
+import { fetchSubjects, type Subject } from "@/lib/api";
 
 const JOURNEY_MILESTONES = [
   { date: "Jan 2025", event: "Joined DC NextGen", icon: "🚀", color: "#7C3AED", completed: true },
@@ -29,11 +31,19 @@ export default function ProfilePage() {
   const [lightMode, setLightMode] = useState(false);
   const [activeTab, setActiveTab] = useState<"overview" | "journey" | "achievements" | "skills">("overview");
   const [subjects, setSubjects] = useState<Subject[]>([]);
-  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [userClass, setUserClass] = useState(11);
+  const { data: session } = useSession();
+
+  const user = session?.user;
+  const userName = user?.name ?? "DC NextGen Scholar";
+  const userEmail = user?.email ?? "";
+  const userImage = user?.image ?? null;
+  const initials = userName.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2);
 
   useEffect(() => {
-    fetchSubjects(11).then(setSubjects);
-    fetchUserProfile().then(setProfile);
+    const cls = parseInt(localStorage.getItem("userClass") ?? "11");
+    setUserClass(cls);
+    fetchSubjects(cls).then(setSubjects);
   }, []);
 
   useEffect(() => {
@@ -55,10 +65,12 @@ export default function ProfilePage() {
           <div className="relative z-10 flex flex-col sm:flex-row items-start sm:items-center gap-6">
             <div className="relative">
               <div
-                className="w-24 h-24 rounded-2xl flex items-center justify-center font-black text-3xl text-white glow-primary"
+                className="w-24 h-24 rounded-2xl flex items-center justify-center font-black text-3xl text-white glow-primary overflow-hidden"
                 style={{ background: "linear-gradient(135deg,#7C3AED,#5B21B6)" }}
               >
-                DC
+                {userImage ? (
+                  <Image src={userImage} alt={userName} width={96} height={96} className="object-cover w-full h-full" />
+                ) : initials}
               </div>
               <div
                 className="absolute -bottom-2 -right-2 w-8 h-8 rounded-lg flex items-center justify-center text-sm font-black text-white"
@@ -68,8 +80,8 @@ export default function ProfilePage() {
               </div>
             </div>
             <div className="flex-1">
-              <h1 className="text-2xl font-black mb-0.5">DC NextGen Scholar</h1>
-              <div className="text-sm mb-3" style={{ color: "#A78BFA" }}>Class 11 · Brain Forge Level</div>
+              <h1 className="text-2xl font-black mb-0.5">{userName}</h1>
+              <div className="text-sm mb-3" style={{ color: "#A78BFA" }}>Class {userClass} · {userEmail || "Student"}</div>
               <div className="flex flex-wrap gap-3 text-sm">
                 {[
                   { icon: "⚡", label: "11,750 XP", color: "#A78BFA" },

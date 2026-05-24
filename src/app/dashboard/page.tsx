@@ -2,10 +2,11 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import Navbar from "@/components/Navbar";
+import { useSession } from "next-auth/react";
 import {
   ACHIEVEMENTS, HEATMAP_DATA, MOTIVATIONAL_QUOTES,
 } from "@/lib/data";
-import { fetchSubjects, fetchLeaderboard, fetchUserProfile, type Subject, type LeaderEntry, type UserProfile } from "@/lib/api";
+import { fetchSubjects, fetchLeaderboard, type Subject, type LeaderEntry } from "@/lib/api";
 
 const STATS = [
   { label: "Chapters Mastered", value: 47, icon: "📚", color: "#A78BFA", bg: "rgba(124,58,237,0.14)", trend: "+3 this week", bar: 78 },
@@ -85,13 +86,17 @@ export default function DashboardPage() {
   const chatRef = useRef<HTMLDivElement>(null);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [leaderboardData, setLeaderboardData] = useState<LeaderEntry[]>([]);
-  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [userClass, setUserClass] = useState(11);
+  const { data: session } = useSession();
+
+  const userName = session?.user?.name?.split(" ")[0] ?? "Scholar";
 
   useEffect(() => { document.body.className = lightMode ? "light-mode" : ""; }, [lightMode]);
   useEffect(() => {
-    fetchSubjects(11).then(setSubjects);
+    const cls = parseInt(localStorage.getItem("userClass") ?? "11");
+    setUserClass(cls);
+    fetchSubjects(cls).then(setSubjects);
     fetchLeaderboard().then(setLeaderboardData);
-    fetchUserProfile().then(setProfile);
   }, []);
   useEffect(() => {
     const iv = setInterval(() => setQuoteIdx(i => (i + 1) % MOTIVATIONAL_QUOTES.length), 6000);
@@ -153,14 +158,14 @@ export default function DashboardPage() {
               AI-Powered Learning Active
             </div>
             <h1 style={{ fontSize: 48, fontWeight: 900, lineHeight: 1.1, marginBottom: 14, letterSpacing: "-1.5px" }}>
-              Welcome back, <span style={{ background: "linear-gradient(135deg,#A78BFA,#06B6D4)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Scholar! ✨</span>
+              Welcome back, <span style={{ background: "linear-gradient(135deg,#A78BFA,#06B6D4)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>{userName}! ✨</span>
             </h1>
             <p style={{ fontSize: 16, color: "rgba(255,255,255,0.6)", lineHeight: 1.65, maxWidth: 520, marginBottom: 32 }}>
               You&apos;re on a <span style={{ color: "#F59E0B", fontWeight: 700 }}>🔥 12-day streak</span> and ranked <span style={{ color: "#A78BFA", fontWeight: 800 }}>#8 Nationally</span>. 3 missions remaining today!
             </p>
             <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-              <Link href="/class/class-11" style={{ padding: "12px 32px", borderRadius: 14, fontWeight: 700, fontSize: 15, background: "linear-gradient(135deg,#7C3AED,#5B21B6)", color: "white", textDecoration: "none", boxShadow: "0 4px 20px rgba(124,58,237,0.4)" }}>▶ Continue Learning</Link>
-              <Link href="/assessment/mcq/physics-ch3" style={{ padding: "12px 28px", borderRadius: 14, fontWeight: 700, fontSize: 15, background: "rgba(6,182,212,0.15)", border: "1px solid rgba(6,182,212,0.35)", color: "#06B6D4", textDecoration: "none" }}>🎯 Take Assessment</Link>
+              <Link href={`/class/class-${userClass}`} style={{ padding: "12px 32px", borderRadius: 14, fontWeight: 700, fontSize: 15, background: "linear-gradient(135deg,#7C3AED,#5B21B6)", color: "white", textDecoration: "none", boxShadow: "0 4px 20px rgba(124,58,237,0.4)" }}>▶ Continue Learning</Link>
+              <Link href={subjects[0] ? `/assessment/mcq/${subjects[0].id}-ch1?classId=${userClass}` : "/leaderboard"} style={{ padding: "12px 28px", borderRadius: 14, fontWeight: 700, fontSize: 15, background: "rgba(6,182,212,0.15)", border: "1px solid rgba(6,182,212,0.35)", color: "#06B6D4", textDecoration: "none" }}>🎯 Take Assessment</Link>
               <Link href="/leaderboard" style={{ padding: "12px 28px", borderRadius: 14, fontWeight: 700, fontSize: 15, background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.3)", color: "#F59E0B", textDecoration: "none" }}>🏆 Leaderboard</Link>
             </div>
           </div>
@@ -207,7 +212,7 @@ export default function DashboardPage() {
             <div style={{ ...card, padding: "28px 28px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
                 <h2 style={{ fontSize: 17, fontWeight: 800 }}>Continue Learning</h2>
-                <Link href="/class/class-11" style={{ fontSize: 13, color: "#A78BFA", textDecoration: "none", fontWeight: 600 }}>View All →</Link>
+                <Link href={`/class/class-${userClass}`} style={{ fontSize: 13, color: "#A78BFA", textDecoration: "none", fontWeight: 600 }}>View All →</Link>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {RECENT.map((ch) => (
@@ -268,12 +273,12 @@ export default function DashboardPage() {
             {/* Subjects Quick Access */}
             <div style={{ ...card, padding: "28px 28px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-                <h2 style={{ fontSize: 17, fontWeight: 800 }}>My Subjects — Class 11</h2>
-                <Link href="/class/class-11" style={{ fontSize: 13, color: "#A78BFA", textDecoration: "none", fontWeight: 600 }}>Full View →</Link>
+                <h2 style={{ fontSize: 17, fontWeight: 800 }}>My Subjects — Class {userClass}</h2>
+                <Link href={`/class/class-${userClass}`} style={{ fontSize: 13, color: "#A78BFA", textDecoration: "none", fontWeight: 600 }}>Full View →</Link>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
                 {subjects.slice(0, 6).map((s) => (
-                  <Link key={s.id} href={`/subject/${s.id}/11`} style={{ textDecoration: "none", color: "inherit" }}>
+                  <Link key={s.id} href={`/subject/${s.id}/${userClass}`} style={{ textDecoration: "none", color: "inherit" }}>
                     <div style={{
                       padding: "18px 16px", background: "rgba(255,255,255,0.03)", border: `1px solid ${s.color}20`,
                       borderRadius: 14, transition: "all 0.3s cubic-bezier(0.34,1.56,0.64,1)", cursor: "pointer",
