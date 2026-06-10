@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { saveQuizResult } from "@/lib/progress";
 
 interface MCQQuestion {
   id: string;
@@ -399,7 +400,17 @@ export default function MCQPage() {
             {reviewIndex < questions.length - 1 ? (
               <button onClick={() => setReviewIndex((r) => r + 1)} className="flex-1 btn-primary py-3 rounded-xl">Next →</button>
             ) : (
-              <button onClick={() => setPhase("results")} className="flex-1 btn-primary py-3 rounded-xl">See Results 🏆</button>
+              <button onClick={() => {
+                saveQuizResult({
+                  date: new Date().toISOString(),
+                  subjectId, chapterId, classId,
+                  score: accuracy,
+                  questionsTotal: questions.length,
+                  questionsCorrect: score,
+                  type: "mcq",
+                });
+                setPhase("results");
+              }} className="flex-1 btn-primary py-3 rounded-xl">See Results 🏆</button>
             )}
           </div>
         </div>
